@@ -1,9 +1,9 @@
 // Copyright 2018-2022 the Deno authors. All rights reserved. MIT license.
 
-use crate::flags::ConfigFlag;
-use crate::flags::Flags;
-use crate::flags::InstallFlags;
-use crate::flags::TypeCheckMode;
+use crate::args::ConfigFlag;
+use crate::args::Flags;
+use crate::args::InstallFlags;
+use crate::args::TypeCheckMode;
 use crate::fs_util::canonicalize_path;
 use deno_core::error::generic_error;
 use deno_core::error::AnyError;
@@ -321,6 +321,10 @@ fn resolve_shim_data(
     executable_args.push("--no-remote".to_string());
   }
 
+  if flags.no_npm {
+    executable_args.push("--no-npm".to_string());
+  }
+
   if flags.lock_write {
     executable_args.push("--lock-write".to_string());
   }
@@ -331,10 +335,6 @@ fn resolve_shim_data(
 
   if flags.no_prompt {
     executable_args.push("--no-prompt".to_string());
-  }
-
-  if flags.compat {
-    executable_args.push("--compat".to_string());
   }
 
   if !flags.v8_flags.is_empty() {
@@ -403,7 +403,7 @@ fn is_in_path(dir: &Path) -> bool {
 mod tests {
   use super::*;
 
-  use crate::flags::ConfigFlag;
+  use crate::args::ConfigFlag;
   use std::process::Command;
   use test_util::testdata_path;
   use test_util::TempDir;
@@ -592,7 +592,6 @@ mod tests {
         allow_read: Some(vec![]),
         type_check_mode: TypeCheckMode::None,
         log_level: Some(Level::Error),
-        compat: true,
         ..Flags::default()
       },
       &InstallFlags {
@@ -613,7 +612,6 @@ mod tests {
         "--allow-read",
         "--allow-net",
         "--quiet",
-        "--compat",
         "http://localhost:4545/echo_server.ts",
         "--foobar",
       ]

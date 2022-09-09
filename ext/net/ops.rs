@@ -754,13 +754,14 @@ fn rdata_to_return_record(
             let mut s = String::new();
 
             if let Some(name) = name {
-              s.push_str(&format!("{}", name));
+              s.push_str(&name.to_string());
             } else if name.is_none() && key_values.is_empty() {
               s.push(';');
             }
 
             for key_value in key_values {
-              s.push_str(&format!("; {}", key_value));
+              s.push_str("; ");
+              s.push_str(&key_value.to_string());
             }
 
             s
@@ -1046,6 +1047,7 @@ mod tests {
     check_sockopt(String::from("127.0.0.1:4246"), set_keepalive, test_fn).await;
   }
 
+  #[allow(clippy::type_complexity)]
   async fn check_sockopt(
     addr: String,
     set_sockopt_fn: Box<dyn Fn(&mut OpState, u32)>,

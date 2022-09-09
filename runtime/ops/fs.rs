@@ -108,14 +108,6 @@ pub fn init() -> Extension {
     .build()
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OpenArgs {
-  path: String,
-  mode: Option<u32>,
-  options: OpenOptions,
-}
-
 #[derive(Deserialize, Default, Debug)]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
@@ -128,15 +120,18 @@ pub struct OpenOptions {
   create_new: bool,
 }
 
+#[inline]
 fn open_helper(
   state: &mut OpState,
-  args: &OpenArgs,
+  path: &str,
+  mode: Option<u32>,
+  options: Option<&OpenOptions>,
 ) -> Result<(PathBuf, std::fs::OpenOptions), AnyError> {
-  let path = Path::new(&args.path).to_path_buf();
+  let path = Path::new(path).to_path_buf();
 
   let mut open_options = std::fs::OpenOptions::new();
 
-  if let Some(mode) = args.mode {
+  if let Some(mode) = mode {
     // mode only used if creating the file on Unix
     // if not specified, defaults to 0o666
     #[cfg(unix)]
@@ -149,23 +144,36 @@ fn open_helper(
   }
 
   let permissions = state.borrow_mut::<Permissions>();
-  let options = &args.options;
 
-  if options.read {
-    permissions.read.check(&path)?;
+  match options {
+    None => {
+      permissions.read.check(&path)?;
+      open_options
+        .read(true)
+        .create(false)
+        .write(false)
+        .truncate(false)
+        .append(false)
+        .create_new(false);
+    }
+    Some(options) => {
+      if options.read {
+        permissions.read.check(&path)?;
+      }
+
+      if options.write || options.append {
+        permissions.write.check(&path)?;
+      }
+
+      open_options
+        .read(options.read)
+        .create(options.create)
+        .write(options.write)
+        .truncate(options.truncate)
+        .append(options.append)
+        .create_new(options.create_new);
+    }
   }
-
-  if options.write || options.append {
-    permissions.write.check(&path)?;
-  }
-
-  open_options
-    .read(options.read)
-    .create(options.create)
-    .write(options.write)
-    .truncate(options.truncate)
-    .append(options.append)
-    .create_new(options.create_new);
 
   Ok((path, open_options))
 }
@@ -173,9 +181,11 @@ fn open_helper(
 #[op]
 fn op_open_sync(
   state: &mut OpState,
-  args: OpenArgs,
+  path: String,
+  options: Option<OpenOptions>,
+  mode: Option<u32>,
 ) -> Result<ResourceId, AnyError> {
-  let (path, open_options) = open_helper(state, &args)?;
+  let (path, open_options) = open_helper(state, &path, mode, options.as_ref())?;
   let std_file = open_options.open(&path).map_err(|err| {
     Error::new(err.kind(), format!("{}, open '{}'", err, path.display()))
   })?;
@@ -187,9 +197,12 @@ fn op_open_sync(
 #[op]
 async fn op_open_async(
   state: Rc<RefCell<OpState>>,
-  args: OpenArgs,
+  path: String,
+  options: Option<OpenOptions>,
+  mode: Option<u32>,
 ) -> Result<ResourceId, AnyError> {
-  let (path, open_options) = open_helper(&mut state.borrow_mut(), &args)?;
+  let (path, open_options) =
+    open_helper(&mut state.borrow_mut(), &path, mode, options.as_ref())?;
   let std_file = tokio::task::spawn_blocking(move || {
     open_options.open(path.clone()).map_err(|err| {
       Error::new(err.kind(), format!("{}, open '{}'", err, path.display()))
@@ -201,53 +214,47 @@ async fn op_open_async(
   Ok(rid)
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WriteFileArgs {
-  path: String,
-  mode: Option<u32>,
-  append: bool,
-  create: bool,
-  data: ZeroCopyBuf,
-  cancel_rid: Option<ResourceId>,
-}
-
-impl WriteFileArgs {
-  fn into_open_args_and_data(self) -> (OpenArgs, ZeroCopyBuf) {
-    (
-      OpenArgs {
-        path: self.path,
-        mode: self.mode,
-        options: OpenOptions {
-          read: false,
-          write: true,
-          create: self.create,
-          truncate: !self.append,
-          append: self.append,
-          create_new: false,
-        },
-      },
-      self.data,
-    )
+#[inline]
+fn write_open_options(create: bool, append: bool) -> OpenOptions {
+  OpenOptions {
+    read: false,
+    write: true,
+    create,
+    truncate: !append,
+    append,
+    create_new: false,
   }
 }
 
 #[op]
 fn op_write_file_sync(
   state: &mut OpState,
-  args: WriteFileArgs,
+  path: String,
+  mode: Option<u32>,
+  append: bool,
+  create: bool,
+  data: ZeroCopyBuf,
 ) -> Result<(), AnyError> {
-  let (open_args, data) = args.into_open_args_and_data();
-  let (path, open_options) = open_helper(state, &open_args)?;
-  write_file(&path, open_options, &open_args, data)
+  let (path, open_options) = open_helper(
+    state,
+    &path,
+    mode,
+    Some(&write_open_options(create, append)),
+  )?;
+  write_file(&path, open_options, mode, data)
 }
 
 #[op]
 async fn op_write_file_async(
   state: Rc<RefCell<OpState>>,
-  args: WriteFileArgs,
+  path: String,
+  mode: Option<u32>,
+  append: bool,
+  create: bool,
+  data: ZeroCopyBuf,
+  cancel_rid: Option<ResourceId>,
 ) -> Result<(), AnyError> {
-  let cancel_handle = match args.cancel_rid {
+  let cancel_handle = match cancel_rid {
     Some(cancel_rid) => state
       .borrow_mut()
       .resource_table
@@ -255,10 +262,14 @@ async fn op_write_file_async(
       .ok(),
     None => None,
   };
-  let (open_args, data) = args.into_open_args_and_data();
-  let (path, open_options) = open_helper(&mut *state.borrow_mut(), &open_args)?;
+  let (path, open_options) = open_helper(
+    &mut *state.borrow_mut(),
+    &path,
+    mode,
+    Some(&write_open_options(create, append)),
+  )?;
   let write_future = tokio::task::spawn_blocking(move || {
-    write_file(&path, open_options, &open_args, data)
+    write_file(&path, open_options, mode, data)
   });
   if let Some(cancel_handle) = cancel_handle {
     write_future.or_cancel(cancel_handle).await???;
@@ -271,7 +282,7 @@ async fn op_write_file_async(
 fn write_file(
   path: &Path,
   open_options: std::fs::OpenOptions,
-  _open_args: &OpenArgs,
+  _mode: Option<u32>,
   data: ZeroCopyBuf,
 ) -> Result<(), AnyError> {
   let mut std_file = open_options.open(path).map_err(|err| {
@@ -280,7 +291,7 @@ fn write_file(
 
   // need to chmod the file if it already exists and a mode is specified
   #[cfg(unix)]
-  if let Some(mode) = &_open_args.mode {
+  if let Some(mode) = _mode {
     use std::os::unix::fs::PermissionsExt;
     let permissions = PermissionsExt::from_mode(mode & 0o777);
     std_file
@@ -322,10 +333,9 @@ fn seek_helper(args: SeekArgs) -> Result<(u32, SeekFrom), AnyError> {
 #[op]
 fn op_seek_sync(state: &mut OpState, args: SeekArgs) -> Result<u64, AnyError> {
   let (rid, seek_from) = seek_helper(args)?;
-  let pos = StdFileResource::with_file(state, rid, |std_file| {
+  StdFileResource::with_file(state, rid, |std_file| {
     std_file.seek(seek_from).map_err(AnyError::from)
-  })?;
-  Ok(pos)
+  })
 }
 
 #[op]
@@ -335,19 +345,10 @@ async fn op_seek_async(
 ) -> Result<u64, AnyError> {
   let (rid, seek_from) = seek_helper(args)?;
 
-  let resource = state
-    .borrow_mut()
-    .resource_table
-    .get::<StdFileResource>(rid)?;
-
-  let std_file = resource.std_file();
-
-  tokio::task::spawn_blocking(move || {
-    let mut std_file = std_file.lock();
-    std_file.seek(seek_from)
+  StdFileResource::with_file_blocking_task(state, rid, move |std_file| {
+    std_file.seek(seek_from).map_err(AnyError::from)
   })
-  .await?
-  .map_err(AnyError::from)
+  .await
 }
 
 #[op]
@@ -357,8 +358,7 @@ fn op_fdatasync_sync(
 ) -> Result<(), AnyError> {
   StdFileResource::with_file(state, rid, |std_file| {
     std_file.sync_data().map_err(AnyError::from)
-  })?;
-  Ok(())
+  })
 }
 
 #[op]
@@ -366,27 +366,17 @@ async fn op_fdatasync_async(
   state: Rc<RefCell<OpState>>,
   rid: ResourceId,
 ) -> Result<(), AnyError> {
-  let resource = state
-    .borrow_mut()
-    .resource_table
-    .get::<StdFileResource>(rid)?;
-
-  let std_file = resource.std_file();
-
-  tokio::task::spawn_blocking(move || {
-    let std_file = std_file.lock();
-    std_file.sync_data()
+  StdFileResource::with_file_blocking_task(state, rid, move |std_file| {
+    std_file.sync_data().map_err(AnyError::from)
   })
-  .await?
-  .map_err(AnyError::from)
+  .await
 }
 
 #[op]
 fn op_fsync_sync(state: &mut OpState, rid: ResourceId) -> Result<(), AnyError> {
   StdFileResource::with_file(state, rid, |std_file| {
     std_file.sync_all().map_err(AnyError::from)
-  })?;
-  Ok(())
+  })
 }
 
 #[op]
@@ -394,19 +384,10 @@ async fn op_fsync_async(
   state: Rc<RefCell<OpState>>,
   rid: ResourceId,
 ) -> Result<(), AnyError> {
-  let resource = state
-    .borrow_mut()
-    .resource_table
-    .get::<StdFileResource>(rid)?;
-
-  let std_file = resource.std_file();
-
-  tokio::task::spawn_blocking(move || {
-    let std_file = std_file.lock();
-    std_file.sync_all()
+  StdFileResource::with_file_blocking_task(state, rid, move |std_file| {
+    std_file.sync_all().map_err(AnyError::from)
   })
-  .await?
-  .map_err(AnyError::from)
+  .await
 }
 
 #[op]
@@ -425,19 +406,11 @@ async fn op_fstat_async(
   state: Rc<RefCell<OpState>>,
   rid: ResourceId,
 ) -> Result<FsStat, AnyError> {
-  let resource = state
-    .borrow_mut()
-    .resource_table
-    .get::<StdFileResource>(rid)?;
-
-  let std_file = resource.std_file();
-
-  let metadata = tokio::task::spawn_blocking(move || {
-    let std_file = std_file.lock();
-    std_file.metadata()
-  })
-  .await?
-  .map_err(AnyError::from)?;
+  let metadata =
+    StdFileResource::with_file_blocking_task(state, rid, move |std_file| {
+      std_file.metadata().map_err(AnyError::from)
+    })
+    .await?;
   Ok(get_stat(metadata))
 }
 
@@ -469,15 +442,7 @@ async fn op_flock_async(
   use fs3::FileExt;
   super::check_unstable2(&state, "Deno.flock");
 
-  let resource = state
-    .borrow_mut()
-    .resource_table
-    .get::<StdFileResource>(rid)?;
-
-  let std_file = resource.std_file();
-
-  tokio::task::spawn_blocking(move || -> Result<(), AnyError> {
-    let std_file = std_file.lock();
+  StdFileResource::with_file_blocking_task(state, rid, move |std_file| {
     if exclusive {
       std_file.lock_exclusive()?;
     } else {
@@ -485,7 +450,7 @@ async fn op_flock_async(
     }
     Ok(())
   })
-  .await?
+  .await
 }
 
 #[op]
@@ -510,19 +475,11 @@ async fn op_funlock_async(
   use fs3::FileExt;
   super::check_unstable2(&state, "Deno.funlock");
 
-  let resource = state
-    .borrow_mut()
-    .resource_table
-    .get::<StdFileResource>(rid)?;
-
-  let std_file = resource.std_file();
-
-  tokio::task::spawn_blocking(move || -> Result<(), AnyError> {
-    let std_file = std_file.lock();
+  StdFileResource::with_file_blocking_task(state, rid, move |std_file| {
     std_file.unlock()?;
     Ok(())
   })
-  .await?
+  .await
 }
 
 #[op]
@@ -1592,19 +1549,11 @@ async fn op_ftruncate_async(
   let rid = args.rid;
   let len = args.len as u64;
 
-  let resource = state
-    .borrow_mut()
-    .resource_table
-    .get::<StdFileResource>(rid)?;
-
-  let std_file = resource.std_file();
-
-  tokio::task::spawn_blocking(move || {
-    let std_file = std_file.lock();
-    std_file.set_len(len)
+  StdFileResource::with_file_blocking_task(state, rid, move |std_file| {
+    std_file.set_len(len)?;
+    Ok(())
   })
-  .await?
-  .map_err(AnyError::from)
+  .await
 }
 
 #[derive(Deserialize)]
@@ -1884,19 +1833,11 @@ async fn op_futime_async(
   let atime = filetime::FileTime::from_unix_time(args.atime.0, args.atime.1);
   let mtime = filetime::FileTime::from_unix_time(args.mtime.0, args.mtime.1);
 
-  let resource = state
-    .borrow_mut()
-    .resource_table
-    .get::<StdFileResource>(rid)?;
-
-  let std_file = resource.std_file();
-  tokio::task::spawn_blocking(move || {
-    let std_file = std_file.lock();
-    filetime::set_file_handle_times(&std_file, Some(atime), Some(mtime))?;
+  StdFileResource::with_file_blocking_task(state, rid, move |std_file| {
+    filetime::set_file_handle_times(std_file, Some(atime), Some(mtime))?;
     Ok(())
   })
   .await
-  .unwrap()
 }
 
 #[derive(Deserialize)]

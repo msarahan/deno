@@ -14,7 +14,6 @@ use futures::task::noop_waker;
 use futures::Future;
 use serde::Serialize;
 use std::cell::RefCell;
-use std::cell::UnsafeCell;
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::pin::Pin;
@@ -29,17 +28,25 @@ use std::task::Poll;
 /// turn of the event loop, which is too late for certain ops.
 pub struct OpCall<T>(MaybeDone<Pin<Box<dyn Future<Output = T>>>>);
 
+pub enum EagerPollResult<T> {
+  Ready(T),
+  Pending(OpCall<T>),
+}
+
 impl<T> OpCall<T> {
   /// Wraps a future, and polls the inner future immediately.
   /// This should be the default choice for ops.
-  pub fn eager(fut: impl Future<Output = T> + 'static) -> Self {
+  pub fn eager(fut: impl Future<Output = T> + 'static) -> EagerPollResult<T> {
     let boxed = Box::pin(fut) as Pin<Box<dyn Future<Output = T>>>;
     let mut inner = maybe_done(boxed);
     let waker = noop_waker();
     let mut cx = Context::from_waker(&waker);
     let mut pinned = Pin::new(&mut inner);
-    let _ = pinned.as_mut().poll(&mut cx);
-    Self(inner)
+    let poll = pinned.as_mut().poll(&mut cx);
+    match poll {
+      Poll::Ready(_) => EagerPollResult::Ready(pinned.take_output().unwrap()),
+      _ => EagerPollResult::Pending(Self(inner)),
+    }
   }
 
   /// Wraps a future; the inner future is polled the usual way (lazily).
@@ -100,7 +107,7 @@ pub enum OpResult {
 
 impl OpResult {
   pub fn to_v8<'a>(
-    &self,
+    &mut self,
     scope: &mut v8::HandleScope<'a>,
   ) -> Result<v8::Local<'a, v8::Value>, serde_v8::Error> {
     match self {
@@ -160,9 +167,7 @@ impl OpState {
       resource_table: Default::default(),
       get_error_class_fn: &|_| "Error",
       gotham_state: Default::default(),
-      tracker: OpsTracker {
-        ops: UnsafeCell::new(vec![Default::default(); ops_count]),
-      },
+      tracker: OpsTracker::new(ops_count),
     }
   }
 }

@@ -4,7 +4,9 @@ use crate::colors;
 use crate::fs_util::canonicalize_path;
 
 use deno_core::error::AnyError;
+use deno_core::error::JsError;
 use deno_core::futures::Future;
+use deno_runtime::fmt_errors::format_js_error;
 use log::info;
 use notify::event::Event as NotifyEvent;
 use notify::event::EventKind;
@@ -30,7 +32,7 @@ struct DebouncedReceiver {
   // and so we store this state on the struct to ensure we don't
   // lose items if a `recv()` never completes
   received_items: HashSet<PathBuf>,
-  receiver: mpsc::UnboundedReceiver<Vec<PathBuf>>,
+  receiver: UnboundedReceiver<Vec<PathBuf>>,
 }
 
 impl DebouncedReceiver {
@@ -53,7 +55,7 @@ impl DebouncedReceiver {
     }
 
     loop {
-      tokio::select! {
+      select! {
         items = self.receiver.recv() => {
           self.received_items.extend(items?);
         }
@@ -71,8 +73,15 @@ where
 {
   let result = watch_future.await;
   if let Err(err) = result {
-    let msg = format!("{}: {}", colors::red_bold("error"), err);
-    eprintln!("{}", msg);
+    let error_string = match err.downcast_ref::<JsError>() {
+      Some(e) => format_js_error(e),
+      None => format!("{:?}", err),
+    };
+    eprintln!(
+      "{}: {}",
+      colors::red_bold("error"),
+      error_string.trim_start_matches("error: ")
+    );
   }
 }
 
@@ -246,13 +255,13 @@ where
 /// changes. For example, in the case where we would like to bundle, then `operation` would
 /// have the logic for it like bundling the code.
 pub async fn watch_func2<T: Clone, O, F>(
-  mut paths_to_watch_receiver: mpsc::UnboundedReceiver<Vec<PathBuf>>,
+  mut paths_to_watch_receiver: UnboundedReceiver<Vec<PathBuf>>,
   mut operation: O,
   operation_args: T,
   print_config: PrintConfig,
 ) -> Result<(), AnyError>
 where
-  O: FnMut(T) -> F,
+  O: FnMut(T) -> Result<F, AnyError>,
   F: Future<Output = Result<(), AnyError>>,
 {
   let (watcher_sender, mut watcher_receiver) =
@@ -297,7 +306,7 @@ where
         add_paths_to_watcher(&mut watcher, &maybe_paths.unwrap());
       }
     };
-    let operation_future = error_handler(operation(operation_args.clone()));
+    let operation_future = error_handler(operation(operation_args.clone())?);
 
     select! {
       _ = receiver_future => {},

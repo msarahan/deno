@@ -249,19 +249,23 @@ where
 {
   let mut prepared = vec![];
 
-  let root_path = std::env::current_dir()?;
+  let root_path = current_dir()?;
   for path in include {
     let lowercase_path = path.to_lowercase();
     if lowercase_path.starts_with("http://")
       || lowercase_path.starts_with("https://")
-      || lowercase_path.starts_with("file://")
     {
       let url = ModuleSpecifier::parse(&path)?;
       prepared.push(url);
       continue;
     }
 
-    let p = normalize_path(&root_path.join(path));
+    let p = if lowercase_path.starts_with("file://") {
+      specifier_to_file_path(&ModuleSpecifier::parse(&path)?)?
+    } else {
+      root_path.join(path)
+    };
+    let p = normalize_path(&p);
     if p.is_dir() {
       let test_files = collect_files(&[p], ignore, &predicate).unwrap();
       let mut test_files_as_urls = test_files
@@ -441,6 +445,48 @@ pub fn path_with_stem_suffix(path: &Path, suffix: &str) -> PathBuf {
   } else {
     path.with_file_name(suffix)
   }
+}
+
+/// Gets if the provided character is not supported on all
+/// kinds of file systems.
+pub fn is_banned_path_char(c: char) -> bool {
+  matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*')
+}
+
+/// Gets a safe local directory name for the provided url.
+///
+/// For example:
+/// https://deno.land:8080/path -> deno.land_8080/path
+pub fn root_url_to_safe_local_dirname(root: &ModuleSpecifier) -> PathBuf {
+  fn sanitize_segment(text: &str) -> String {
+    text
+      .chars()
+      .map(|c| if is_banned_segment_char(c) { '_' } else { c })
+      .collect()
+  }
+
+  fn is_banned_segment_char(c: char) -> bool {
+    matches!(c, '/' | '\\') || is_banned_path_char(c)
+  }
+
+  let mut result = String::new();
+  if let Some(domain) = root.domain() {
+    result.push_str(&sanitize_segment(domain));
+  }
+  if let Some(port) = root.port() {
+    if !result.is_empty() {
+      result.push('_');
+    }
+    result.push_str(&port.to_string());
+  }
+  let mut result = PathBuf::from(result);
+  if let Some(segments) = root.path_segments() {
+    for segment in segments.filter(|s| !s.is_empty()) {
+      result = result.join(sanitize_segment(segment));
+    }
+  }
+
+  result
 }
 
 #[cfg(test)]
@@ -663,6 +709,14 @@ mod tests {
     let ignore_dir_files = ["g.d.ts", ".gitignore"];
     create_files(&ignore_dir_path, &ignore_dir_files);
 
+    let predicate = |path: &Path| {
+      // exclude dotfiles
+      path
+        .file_name()
+        .and_then(|f| f.to_str())
+        .map_or(false, |f| !f.starts_with('.'))
+    };
+
     let result = collect_specifiers(
       vec![
         "http://localhost:8080".to_string(),
@@ -670,13 +724,7 @@ mod tests {
         "https://localhost:8080".to_string(),
       ],
       &[ignore_dir_path],
-      |path| {
-        // exclude dotfiles
-        path
-          .file_name()
-          .and_then(|f| f.to_str())
-          .map_or(false, |f| !f.starts_with('.'))
-      },
+      predicate,
     )
     .unwrap();
 
@@ -698,7 +746,38 @@ mod tests {
     ]
     .iter()
     .map(|f| ModuleSpecifier::parse(f).unwrap())
-    .collect::<Vec<ModuleSpecifier>>();
+    .collect::<Vec<_>>();
+
+    assert_eq!(result, expected);
+
+    let scheme = if cfg!(target_os = "windows") {
+      "file:///"
+    } else {
+      "file://"
+    };
+    let result = collect_specifiers(
+      vec![format!(
+        "{}{}",
+        scheme,
+        root_dir_path
+          .join("child")
+          .to_str()
+          .unwrap()
+          .replace('\\', "/")
+      )],
+      &[],
+      predicate,
+    )
+    .unwrap();
+
+    let expected: Vec<ModuleSpecifier> = [
+      &format!("{}/child/README.md", root_dir_url),
+      &format!("{}/child/e.mjs", root_dir_url),
+      &format!("{}/child/f.mjsx", root_dir_url),
+    ]
+    .iter()
+    .map(|f| ModuleSpecifier::parse(f).unwrap())
+    .collect::<Vec<_>>();
 
     assert_eq!(result, expected);
   }

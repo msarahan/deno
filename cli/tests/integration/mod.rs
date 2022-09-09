@@ -60,8 +60,6 @@ mod bundle;
 mod cache;
 #[path = "check_tests.rs"]
 mod check;
-#[path = "compat_tests.rs"]
-mod compat;
 #[path = "compile_tests.rs"]
 mod compile;
 #[path = "coverage_tests.rs"]
@@ -74,6 +72,8 @@ mod eval;
 mod fmt;
 #[path = "info_tests.rs"]
 mod info;
+#[path = "init_tests.rs"]
+mod init;
 #[path = "inspector_tests.rs"]
 mod inspector;
 #[path = "install_tests.rs"]
@@ -82,6 +82,8 @@ mod install;
 mod lint;
 #[path = "lsp_tests.rs"]
 mod lsp;
+#[path = "npm_tests.rs"]
+mod npm;
 #[path = "repl_tests.rs"]
 mod repl;
 #[path = "run_tests.rs"]
@@ -157,12 +159,6 @@ fn cache_test() {
     .output()
     .expect("Failed to spawn script");
   assert!(output.status.success());
-
-  let out = std::str::from_utf8(&output.stderr).unwrap();
-  // Check if file and dependencies are written successfully
-  assert!(out.contains("host.writeFile(\"deno://subdir/print_hello.js\")"));
-  assert!(out.contains("host.writeFile(\"deno://subdir/mod2.js\")"));
-  assert!(out.contains("host.writeFile(\"deno://006_url_imports.js\")"));
 
   let prg = util::deno_exe_path();
   let output = Command::new(&prg)
@@ -367,46 +363,6 @@ fn ts_no_recheck_on_redirect() {
     .expect("failed to spawn script");
 
   assert!(std::str::from_utf8(&output.stderr).unwrap().is_empty());
-}
-
-#[test]
-fn ts_reload() {
-  let hello_ts = util::testdata_path().join("002_hello.ts");
-  assert!(hello_ts.is_file());
-
-  let deno_dir = TempDir::new();
-  let mut initial = util::deno_cmd_with_deno_dir(&deno_dir)
-    .current_dir(util::testdata_path())
-    .arg("cache")
-    .arg("--check=all")
-    .arg(&hello_ts)
-    .spawn()
-    .expect("failed to spawn script");
-  let status_initial =
-    initial.wait().expect("failed to wait for child process");
-  assert!(status_initial.success());
-
-  let output = util::deno_cmd_with_deno_dir(&deno_dir)
-    .current_dir(util::testdata_path())
-    .arg("cache")
-    .arg("--check=all")
-    .arg("--reload")
-    .arg("-L")
-    .arg("debug")
-    .arg(&hello_ts)
-    .output()
-    .expect("failed to spawn script");
-
-  // check the output of the the bundle program.
-  let output_path = hello_ts.canonicalize().unwrap();
-  assert!(
-    dbg!(std::str::from_utf8(&output.stderr).unwrap().trim()).contains(
-      &format!(
-        "host.getSourceFile(\"{}\", Latest)",
-        url::Url::from_file_path(&output_path).unwrap().as_str()
-      )
-    )
-  );
 }
 
 #[test]
@@ -709,6 +665,46 @@ fn websocketstream() {
 }
 
 #[test]
+fn websocketstream_ping() {
+  use deno_runtime::deno_websocket::tokio_tungstenite::tungstenite;
+  let _g = util::http_server();
+
+  let script = util::testdata_path().join("websocketstream_ping_test.ts");
+  let root_ca = util::testdata_path().join("tls/RootCA.pem");
+  let mut child = util::deno_cmd()
+    .arg("test")
+    .arg("--unstable")
+    .arg("--allow-net")
+    .arg("--cert")
+    .arg(root_ca)
+    .arg(script)
+    .stdout(std::process::Stdio::piped())
+    .spawn()
+    .unwrap();
+
+  let server = std::net::TcpListener::bind("127.0.0.1:4513").unwrap();
+  let (stream, _) = server.accept().unwrap();
+  let mut socket = tungstenite::accept(stream).unwrap();
+  socket
+    .write_message(tungstenite::Message::Text(String::from("A")))
+    .unwrap();
+  socket
+    .write_message(tungstenite::Message::Ping(vec![]))
+    .unwrap();
+  socket
+    .write_message(tungstenite::Message::Text(String::from("B")))
+    .unwrap();
+  let message = socket.read_message().unwrap();
+  assert_eq!(message, tungstenite::Message::Pong(vec![]));
+  socket
+    .write_message(tungstenite::Message::Text(String::from("C")))
+    .unwrap();
+  socket.close(None).unwrap();
+
+  assert!(child.wait().unwrap().success());
+}
+
+#[test]
 fn websocket_server_multi_field_connection_header() {
   let script = util::testdata_path()
     .join("websocket_server_multi_field_connection_header_test.ts");
@@ -932,7 +928,7 @@ async fn test_resolve_dns() {
     let out = String::from_utf8_lossy(&output.stdout);
     assert!(!output.status.success());
     assert!(err.starts_with("Check file"));
-    assert!(err.contains(r#"error: Uncaught (in promise) PermissionDenied: Requires net access to "127.0.0.1:4553""#));
+    assert!(err.contains(r#"error: Uncaught PermissionDenied: Requires net access to "127.0.0.1:4553""#));
     assert!(out.is_empty());
   }
 
@@ -954,7 +950,7 @@ async fn test_resolve_dns() {
     let out = String::from_utf8_lossy(&output.stdout);
     assert!(!output.status.success());
     assert!(err.starts_with("Check file"));
-    assert!(err.contains(r#"error: Uncaught (in promise) PermissionDenied: Requires net access to "127.0.0.1:4553""#));
+    assert!(err.contains(r#"error: Uncaught PermissionDenied: Requires net access to "127.0.0.1:4553""#));
     assert!(out.is_empty());
   }
 

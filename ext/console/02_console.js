@@ -720,27 +720,20 @@
 
   // Replace escape sequences that can modify output.
   function replaceEscapeSequences(string) {
+    const escapeMap = {
+      "\b": "\\b",
+      "\f": "\\f",
+      "\n": "\\n",
+      "\r": "\\r",
+      "\t": "\\t",
+      "\v": "\\v",
+    };
+
     return StringPrototypeReplace(
       StringPrototypeReplace(
-        StringPrototypeReplace(
-          StringPrototypeReplace(
-            StringPrototypeReplace(
-              StringPrototypeReplace(
-                StringPrototypeReplace(string, /[\b]/g, "\\b"),
-                /\f/g,
-                "\\f",
-              ),
-              /\n/g,
-              "\\n",
-            ),
-            /\r/g,
-            "\\r",
-          ),
-          /\t/g,
-          "\\t",
-        ),
-        /\v/g,
-        "\\v",
+        string,
+        /([\b\f\n\r\t\v])/g,
+        (c) => escapeMap[c],
       ),
       // deno-lint-ignore no-control-regex
       /[\x00-\x1f\x7f-\x9f]/g,
@@ -965,6 +958,8 @@
         const line = ArrayPrototypeShift(stackLines);
         if (RegExpPrototypeTest(/\s+at/, line)) {
           ArrayPrototypeUnshift(stackLines, line);
+          break;
+        } else if (typeof line === "undefined") {
           break;
         }
 
@@ -2146,7 +2141,7 @@
       label = String(label);
 
       if (!MapPrototypeHas(timerMap, label)) {
-        this.warn(`Timer '${label}' does not exists`);
+        this.warn(`Timer '${label}' does not exist`);
         return;
       }
 

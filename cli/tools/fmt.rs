@@ -7,16 +7,14 @@
 //! the future it can be easily extended to provide
 //! the same functions as ops available in JS runtime.
 
+use crate::args::CliOptions;
+use crate::args::FmtFlags;
+use crate::args::FmtOptionsConfig;
+use crate::args::ProseWrap;
 use crate::colors;
-use crate::config_file::FmtConfig;
-use crate::config_file::FmtOptionsConfig;
-use crate::config_file::ProseWrap;
-use crate::deno_dir::DenoDir;
 use crate::diff::diff;
 use crate::file_watcher;
 use crate::file_watcher::ResolutionResult;
-use crate::flags::Flags;
-use crate::flags::FmtFlags;
 use crate::fs_util::collect_files;
 use crate::fs_util::get_extension;
 use crate::fs_util::specifier_to_file_path;
@@ -41,15 +39,15 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use super::incremental_cache::IncrementalCache;
+use crate::cache::IncrementalCache;
 
 /// Format JavaScript/TypeScript files.
 pub async fn format(
-  flags: &Flags,
+  config: &CliOptions,
   fmt_flags: FmtFlags,
-  maybe_fmt_config: Option<FmtConfig>,
-  deno_dir: &DenoDir,
 ) -> Result<(), AnyError> {
+  let maybe_fmt_config = config.to_fmt_config()?;
+  let deno_dir = config.resolve_deno_dir()?;
   let FmtFlags {
     files,
     ignore,
@@ -138,6 +136,7 @@ pub async fn format(
       }
     }
   };
+  let deno_dir = &deno_dir;
   let operation = |(paths, fmt_options): (Vec<PathBuf>, FmtOptionsConfig)| async move {
     let incremental_cache = Arc::new(IncrementalCache::new(
       &deno_dir.fmt_incremental_cache_db_file_path(),
@@ -154,13 +153,13 @@ pub async fn format(
     Ok(())
   };
 
-  if flags.watch.is_some() {
+  if config.watch_paths().is_some() {
     file_watcher::watch_func(
       resolver,
       operation,
       file_watcher::PrintConfig {
         job_name: "Fmt".to_string(),
-        clear_screen: !flags.no_clear_screen,
+        clear_screen: !config.no_clear_screen(),
       },
     )
     .await?;
@@ -455,8 +454,9 @@ fn format_ensure_stable(
                 "Formatting succeeded initially, but failed when ensuring a ",
                 "stable format. This indicates a bug in the formatter where ",
                 "the text it produces is not syntatically correct. As a temporary ",
-                "workfaround you can ignore this file.\n\n{:#}"
+                "workfaround you can ignore this file ({}).\n\n{:#}"
               ),
+              file_path.display(),
               err,
             )
           }
@@ -466,10 +466,11 @@ fn format_ensure_stable(
           panic!(
             concat!(
               "Formatting not stable. Bailed after {} tries. This indicates a bug ",
-              "in the formatter where it formats the file differently each time. As a ",
+              "in the formatter where it formats the file ({}) differently each time. As a ",
               "temporary workaround you can ignore this file."
             ),
-            count
+            count,
+            file_path.display(),
           )
         }
       }
