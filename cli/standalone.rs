@@ -305,7 +305,7 @@ pub async fn run(
     shared_array_buffer_store: None,
     compiled_wasm_module_store: None,
     stdio: Default::default(),
-    startup_snapshot: Some(deno_snapshots::compiler_snapshot()),
+    startup_snapshot: Some(deno_snapshots::tsc_snapshot()),
   };
   let mut worker = MainWorker::bootstrap_from_options(
     main_module.clone(),

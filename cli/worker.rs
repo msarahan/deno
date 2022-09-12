@@ -411,7 +411,6 @@ pub async fn create_main_worker(
       ts_version: version::TYPESCRIPT.to_string(),
       unstable: ps.options.unstable(),
       user_agent: version::get_user_agent(),
-      startup_snapshot: Some(deno_snapshots::compiler_snapshot()),
     },
     extensions,
     unsafely_ignore_certificate_errors: ps
@@ -436,6 +435,7 @@ pub async fn create_main_worker(
     shared_array_buffer_store: Some(ps.shared_array_buffer_store.clone()),
     compiled_wasm_module_store: Some(ps.compiled_wasm_module_store.clone()),
     stdio,
+    startup_snapshot: Some(deno_snapshots::tsc_snapshot()),
   };
 
   let worker = MainWorker::bootstrap_from_options(
@@ -517,7 +517,6 @@ fn create_web_worker_callback(
         ts_version: version::TYPESCRIPT.to_string(),
         unstable: ps.options.unstable(),
         user_agent: version::get_user_agent(),
-        startup_snapshot: Some(deno_snapshots::compiler_snapshot()),
       },
       extensions,
       unsafely_ignore_certificate_errors: ps
@@ -541,6 +540,7 @@ fn create_web_worker_callback(
       shared_array_buffer_store: Some(ps.shared_array_buffer_store.clone()),
       compiled_wasm_module_store: Some(ps.compiled_wasm_module_store.clone()),
       stdio: stdio.clone(),
+      startup_snapshot: Some(deno_snapshots::tsc_snapshot()),
     };
 
     WebWorker::bootstrap_from_options(

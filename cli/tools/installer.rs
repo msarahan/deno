@@ -866,7 +866,9 @@ mod tests {
       .unwrap()
       .wait()
       .unwrap();
-    assert!(status.success());
+    if !status.success() {
+      panic!("{}", status.to_string());
+    }
   }
 
   #[test]

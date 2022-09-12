@@ -56,16 +56,6 @@ pub enum Snapshot {
   Boxed(Box<[u8]>),
 }
 
-impl Clone for Snapshot {
-  fn clone(&self) -> Self {
-    match self {
-      Self::Static(ptr) => Self::Static(ptr),
-      Self::JustCreated(_) => panic!("Can't Clone Snapshot::JustCreated"),
-      Self::Boxed(boxed) => Self::Boxed(boxed.clone()),
-    }
-  }
-}
-
 pub type JsErrorCreateFn = dyn Fn(JsError) -> Error;
 
 pub type GetErrorClassFn = &'static dyn for<'e> Fn(&'e Error) -> &'static str;
@@ -553,6 +543,7 @@ impl JsRuntime {
     for m in extensions.iter_mut() {
       let js_files = m.init_js();
       for (filename, source) in js_files {
+        println!("{}", filename);
         // TODO(@AaronO): use JsRuntime::execute_static() here to move src off heap
         realm.execute_script(self.v8_isolate(), filename, source)?;
       }

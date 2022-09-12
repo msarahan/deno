@@ -31,6 +31,8 @@ pub fn init() -> Extension {
       "js/40_tty.js",
       "js/40_write_file.js",
       "js/41_prompt.js",
+      "../ext/flash/01_http.js",
+      "../ext/http/01_http.js",
       "js/90_deno_ns.js",
       "js/99_main.js",
     ))

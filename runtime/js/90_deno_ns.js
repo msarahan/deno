@@ -1,6 +1,10 @@
 // Copyright 2018-2022 the Deno authors. All rights reserved. MIT license.
 "use strict";
 
+console.log("Deno namespace");
+console.log("--------------");
+console.log(__bootstrap);
+
 ((window) => {
   const core = window.Deno.core;
   const __bootstrap = window.__bootstrap;
