@@ -411,6 +411,7 @@ pub async fn create_main_worker(
       ts_version: version::TYPESCRIPT.to_string(),
       unstable: ps.options.unstable(),
       user_agent: version::get_user_agent(),
+      startup_snapshot: Some(deno_snapshots::compiler_snapshot()),
     },
     extensions,
     unsafely_ignore_certificate_errors: ps
@@ -516,6 +517,7 @@ fn create_web_worker_callback(
         ts_version: version::TYPESCRIPT.to_string(),
         unstable: ps.options.unstable(),
         user_agent: version::get_user_agent(),
+        startup_snapshot: Some(deno_snapshots::compiler_snapshot()),
       },
       extensions,
       unsafely_ignore_certificate_errors: ps

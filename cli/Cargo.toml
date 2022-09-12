@@ -25,18 +25,7 @@ harness = false
 path = "./bench/lsp_bench_standalone.rs"
 
 [build-dependencies]
-deno_broadcast_channel = { version = "0.62.0", path = "../ext/broadcast_channel" }
-deno_console = { version = "0.68.0", path = "../ext/console" }
-deno_core = { version = "0.150.0", path = "../core" }
-deno_crypto = { version = "0.82.0", path = "../ext/crypto" }
-deno_fetch = { version = "0.91.0", path = "../ext/fetch" }
-deno_net = { version = "0.60.0", path = "../ext/net" }
-deno_node = { version = "0.5.0", path = "../ext/node" }
-deno_url = { version = "0.68.0", path = "../ext/url" }
-deno_web = { version = "0.99.0", path = "../ext/web" }
-deno_webgpu = { version = "0.69.0", path = "../ext/webgpu" }
-deno_websocket = { version = "0.73.0", path = "../ext/websocket" }
-deno_webstorage = { version = "0.63.0", path = "../ext/webstorage" }
+deno_runtime = { version="0.76.0", path = "../runtime" }
 regex = "=1.6.0"
 serde = { version = "=1.0.144", features = ["derive"] }
 zstd = '=0.11.1'
@@ -53,6 +42,7 @@ deno_emit = "0.9.0"
 deno_graph = "0.34.0"
 deno_lint = { version = "0.33.0", features = ["docs"] }
 deno_runtime = { version = "0.76.0", path = "../runtime" }
+deno_snapshots = { version = "0.0.0", path = "../snapshots" }
 deno_task_shell = "0.5.2"
 
 atty = "=0.2.14"
@@ -134,3 +124,6 @@ OriginalFilename = "deno.exe"
 LegalCopyright = "© Deno contributors & Deno Land Inc. MIT licensed."
 ProductName = "Deno"
 FileDescription = "Deno: A secure runtime for JavaScript and TypeScript"
+
+[features]
+snaphack = []
