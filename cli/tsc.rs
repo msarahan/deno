@@ -623,7 +623,7 @@ pub fn exec(request: Request) -> Result<Response, AnyError> {
     })
     .collect();
   let mut runtime = JsRuntime::new(RuntimeOptions {
-    startup_snapshot: Some(deno_snapshots::compiler_snapshot()),
+    startup_snapshot: Some(deno_snapshots::tsc_snapshot()),
     extensions: vec![Extension::builder()
       .ops(vec![
         op_cwd::decl(),
@@ -806,7 +806,7 @@ mod tests {
   #[test]
   fn test_compiler_snapshot() {
     let mut js_runtime = JsRuntime::new(RuntimeOptions {
-      startup_snapshot: Some(deno_snapshots::compiler_snapshot()),
+      startup_snapshot: Some(deno_snapshots::tsc_snapshot()),
       ..Default::default()
     });
     js_runtime

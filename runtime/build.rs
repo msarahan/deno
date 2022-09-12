@@ -1,8 +1,6 @@
 // Copyright 2018-2022 the Deno authors. All rights reserved. MIT license.
 
 use std::env;
-use std::path::Path;
-use std::path::PathBuf;
 
 fn main() {
   // Skip building from docs.rs
